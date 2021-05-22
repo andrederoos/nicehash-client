@@ -1,0 +1,19 @@
+{
+    "name": "andre/nicehash-client",
+    "description": "REST-api client for NiceHash",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Andre de Roos",
+            "email": "a.deroos@iseetechnology.nl"
+        }
+    ],
+    "require": {
+        "guzzlehttp/guzzle": "^7.3"
+    },
+    "autoload": {
+        "psr-4": {
+            "NiceHashClient\\": "src/"
+        }
+    }
+}
