@@ -7,6 +7,7 @@ use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\HandlerStack;
+use Psr\Log\LoggerInterface;
 
 class NiceHashClient
 {
