@@ -1,12 +1,20 @@
 <?php
 namespace NiceHashClient;
 
-use NiceHashClient\request\NiceHashRequest;
+use NiceHashClient\object\HttpMethod;
 use GuzzleHttp\Client;
+use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
+use GuzzleHttp\Middleware;
+use GuzzleHttp\HandlerStack;
 
 class NiceHashClient
 {
+    /**
+     * Exception messages.
+     */
+    private const EXCEPTION_INVALID_METHOD = 'Invalid request method "%s". Expected "%s".';
+
     /**
      * Client url and headers.
      */
@@ -44,6 +52,11 @@ class NiceHashClient
     private $organisationId;
 
     /**
+     * @var Client
+     */
+    private $client;
+
+    /**
      * @param string $apiKey
      * @param string $apiSecret
      * @param string $organisationId
@@ -53,16 +66,22 @@ class NiceHashClient
         $this->apiKey = $apiKey;
         $this->apiSecret = $apiSecret;
         $this->organisationId = $organisationId;
+        $this->client = new Client([self::FIELD_BASE_URI => self::URL_API]);
     }
 
-    public function get(NiceHashRequest $request): Response
+    /**
+     * @param Request $request
+     * @param string|null $requestId
+     *
+     * @return Response
+     */
+    public function get(Request $request, string $requestId = null): Response
     {
+        $this->assertValidHttpMethod($request, HttpMethod::GET);
         $time = $this->getTimeInMiliseconds();
-        $nonce = $this->determineRequestId($request);
+        $nonce = $this->determineRequestId($requestId);
 
-        $client = new Client([self::FIELD_BASE_URI => self::URL_API]);
-
-        return $client->send(
+        return $this->client->send(
             $request,
             [
                 self::FIELD_HEADERS => [
@@ -70,27 +89,75 @@ class NiceHashClient
                     self::HEADER_X_NONCE => $nonce,
                     self::HEADER_X_ORGANIZATION_ID => $this->organisationId,
                     self::HEADER_X_REQUEST_ID => $nonce,
-                    self::HEADER_X_AUTH => $this->generateRequestSignature($time, $nonce, $request)
+                    self::HEADER_X_AUTH => $this->generateGetSignature($time, $nonce, $request)
                 ]
             ]
         );
     }
 
-    public function post(NiceHashRequest $request): Response
+    /**
+     * @param Request $request
+     * @param string|null $requestId
+     *
+     * @return Response
+     */
+    public function post(Request $request, string $requestId = null): Response
     {
+        $this->assertValidHttpMethod($request, HttpMethod::POST);
+        $time = $this->getTimeInMiliseconds();
+        $nonce = $this->determineRequestId($requestId);
 
+        return $this->client->send(
+            $request,
+            [
+                self::FIELD_HEADERS => [
+                    self::HEADER_X_TIME => $time,
+                    self::HEADER_X_NONCE => $nonce,
+                    self::HEADER_X_ORGANIZATION_ID => $this->organisationId,
+                    self::HEADER_X_REQUEST_ID => $nonce,
+                    self::HEADER_X_AUTH => $this->generatePostSignature($time, $nonce, $request),
+                ]
+            ]
+        );
     }
 
-    private function determineRequestId(NiceHashRequest $request): string
+    /**
+     * @param Request $request
+     * @param string $httpMethod
+     * 
+     * @throws \Exception
+     */
+    private function assertValidHttpMethod(Request $request, string $httpMethod): void
     {
-        if (is_null($request->getRequestIdOrNull())) {
-            return uniqid();
+        if ($request->getMethod() === $httpMethod) {
+            // Correct method.
         } else {
-            return $request->getRequestIdOrNull();
+            throw new \Exception(vsprintf(self::EXCEPTION_INVALID_METHOD, [$request->getMethod(), $httpMethod]));
         }
     }
 
-    private function generateRequestSignature(string $time, string $nonce, NiceHashRequest $request): string
+    /**
+     * @param string $requestId
+     *
+     * @return string
+     */
+    private function determineRequestId(string $requestId = null): string
+    {
+        if (is_null($requestId)) {
+            return uniqid();
+        } else {
+            return $requestId;
+        }
+    }
+
+    /**
+     * @param string $time
+     * @param string $nonce
+     * @param Request $request
+     *
+     * @return string
+     */
+    private function generateGetSignature(string $time, string $nonce, Request $request): string
     {
         $signature = 
             $this->apiKey . 
@@ -114,6 +181,42 @@ class NiceHashClient
         return vsprintf(self::FORMAT_AUTH, [$this->apiKey, $signatureHash]);
     }
 
+    /**
+     * @param string $time
+     * @param string $nonce
+     * @param Request $request
+     *
+     * @return string
+     */
+    private function generatePostSignature(string $time, string $nonce, Request $request): string
+    {
+        $signature = 
+            $this->apiKey . 
+            "\x00" .
+            $time . 
+            "\x00" . 
+            $nonce . 
+            "\x00" . 
+            "\x00" . 
+            $this->organisationId . 
+            "\x00" . 
+            "\x00" . 
+            $request->getMethod() . 
+            "\x00" . 
+            $request->getUri()->getPath() . 
+            "\x00" . 
+            $request->getUri()->getQuery() . 
+            "\x00" . 
+            $request->getBody();
+
+        $signatureHash = hash_hmac('sha256', $signature, $this->apiSecret);
+
+        return vsprintf(self::FORMAT_AUTH, [$this->apiKey, $signatureHash]);
+    }
+
+    /**
+     * @return int
+     */
     private function getTimeInMiliseconds(): int {
         $microTime = explode(' ', microtime());
         
